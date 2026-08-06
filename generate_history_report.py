@@ -14,30 +14,27 @@ Overwrites output/{AIRPORT_ICAO}_history_report.html in place on every run.
 
 import datetime as dt
 import html
-import json
-import re
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import folium
 import pandas as pd
 
-from src.flightaware_client import (
-    MAX_HISTORY_DAYS,
-    fetch_airport,
-    fetch_arrivals,
-    fetch_departures,
+from src.flightaware_client import MAX_HISTORY_DAYS, fetch_arrivals, fetch_departures
+from src.mapping import (
+    add_route_group,
+    build_map,
+    get_center_coords,
+    is_sweden,
+    load_coord_cache,
+    parse_position_code,
+    save_coord_cache,
 )
 
 AIRPORT_ICAO = "EETU"
 REQUESTED_HISTORY_DAYS = 14
 LOCAL_TZ = ZoneInfo("Europe/Tallinn")
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
-COORD_CACHE_PATH = OUTPUT_DIR / "airport_coords_cache.json"
-
-POSITION_RE = re.compile(r"^L\s+(-?\d+\.?\d*)\s+(-?\d+\.?\d*)$")
 
 STATUS_CLASSES = {
     "arrived": "status-ok",
@@ -46,28 +43,19 @@ STATUS_CLASSES = {
 }
 
 
-def _parse_position_code(code: str | None) -> tuple[float, float] | None:
-    """Ad-hoc/GA flights without a matched airport report their last known
-    position as a synthetic code like "L 66.12936 12.70054" (lat, lon)."""
-    if not code:
-        return None
-    m = POSITION_RE.match(code)
-    if not m:
-        return None
-    return float(m.group(1)), float(m.group(2))
-
-
 def _airport_label(name: str | None, city: str | None, code: str | None) -> str:
     place = city or name
     if place and code:
-        return f"{place} ({code})"
-    return code or place or "Unknown"
+        label = f"{place} ({code})"
+    else:
+        label = code or place or "Unknown"
+    return f"🇸🇪 {label}" if is_sweden(code) else label
 
 
 def _extract_row(flight: dict[str, Any], *, arrival: bool) -> dict[str, Any]:
     other = flight.get("origin" if arrival else "destination") or {}
     code = other.get("code") or other.get("code_icao")
-    position = _parse_position_code(code)
+    position = parse_position_code(code)
 
     if arrival:
         scheduled = flight.get("scheduled_in") or flight.get("scheduled_on")
@@ -78,8 +66,15 @@ def _extract_row(flight: dict[str, Any], *, arrival: bool) -> dict[str, Any]:
         estimated = flight.get("estimated_out") or flight.get("estimated_off")
         actual = flight.get("actual_out") or flight.get("actual_off")
 
+    ident = flight.get("ident") or "—"
+    registration = flight.get("registration")
+    # For GA flights `ident` already *is* the tail number (e.g. "OY-BKM") — only
+    # show a separate registration when it adds information beyond the callsign.
+    registration_display = registration if registration and registration != ident else "—"
+
     return {
-        "ident": flight.get("ident") or "—",
+        "ident": ident,
+        "registration": registration_display,
         "aircraft_type": flight.get("aircraft_type") or "—",
         "other_code": code,
         "other_label": (
@@ -87,8 +82,6 @@ def _extract_row(flight: dict[str, Any], *, arrival: bool) -> dict[str, Any]:
             if position
             else _airport_label(other.get("name"), other.get("city"), code)
         ),
-        "is_position_only": position is not None,
-        "coords": position,
         "scheduled": pd.to_datetime(scheduled) if scheduled else pd.NaT,
         "actual": pd.to_datetime(actual) if actual else pd.NaT,
         "status": flight.get("status") or "Unknown",
@@ -143,18 +136,20 @@ def _rows_to_html(df: pd.DataFrame, other_column_label: str) -> str:
         return '<p class="empty">No flights in this window.</p>'
 
     header = (
-        "<tr><th>Date</th><th>Time (local)</th><th>Flight</th><th>Aircraft</th>"
+        "<tr><th>Date</th><th>Time (local)</th><th>Flight</th><th>Reg.</th><th>Aircraft</th>"
         f"<th>{other_column_label}</th><th>Status</th><th>vs. schedule</th></tr>"
     )
     body_rows = []
     for _, row in df.iterrows():
         date_str, time_str = _fmt_local(row["actual"] if pd.notna(row["actual"]) else row["scheduled"])
         status_cls = _status_class(row["status"], row["cancelled"], row["diverted"])
+        row_cls = ' class="sweden"' if is_sweden(row["other_code"]) else ""
         body_rows.append(
-            "<tr>"
+            f"<tr{row_cls}>"
             f"<td>{html.escape(date_str)}</td>"
             f"<td>{html.escape(time_str)}</td>"
             f"<td>{html.escape(row['ident'])}</td>"
+            f"<td>{html.escape(row['registration'])}</td>"
             f"<td>{html.escape(row['aircraft_type'])}</td>"
             f"<td>{html.escape(row['other_label'])}</td>"
             f'<td><span class="badge {status_cls}">{html.escape(row["status"])}</span></td>'
@@ -164,96 +159,40 @@ def _rows_to_html(df: pd.DataFrame, other_column_label: str) -> str:
     return f"<table>\n<thead>{header}</thead>\n<tbody>{''.join(body_rows)}</tbody>\n</table>"
 
 
-def _load_coord_cache() -> dict[str, tuple[float, float] | None]:
-    """Airport coordinates never change, so persist lookups to disk across runs —
-    AeroAPI's request quota is easy to exhaust otherwise (hit live during testing)."""
-    if not COORD_CACHE_PATH.exists():
-        return {}
-    raw = json.loads(COORD_CACHE_PATH.read_text())
-    return {code: tuple(coords) if coords else None for code, coords in raw.items()}
-
-
-def _save_coord_cache(cache: dict[str, tuple[float, float] | None]) -> None:
-    # Drop failed lookups (None) so a future run retries them instead of
-    # permanently remembering a transient rate-limit error as "no coordinates".
-    resolved = {code: coords for code, coords in cache.items() if coords}
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    COORD_CACHE_PATH.write_text(json.dumps(resolved, indent=2, sort_keys=True))
-
-
-def _get_coords(code: str | None, position: tuple[float, float] | None, cache: dict) -> tuple[float, float] | None:
-    if position:
-        return position
-    # A missing origin/destination code survives as Python None at extraction time, but
-    # pandas silently upgrades None to float('nan') once it round-trips through a
-    # DataFrame/iterrows(). NaN is truthy, so a plain `if not code` lets it through and
-    # it ends up as a cache/dict key — corrupting json.dumps(..., sort_keys=True) later.
-    if code is None or (isinstance(code, float) and pd.isna(code)) or not code:
-        return None
-    if code in cache:
-        return cache[code]
-    try:
-        info = fetch_airport(code)
-        coords = (info["latitude"], info["longitude"])
-    except Exception as exc:  # noqa: BLE001 - keep report generation going despite a bad lookup
-        print(f"warning: could not resolve coordinates for {code}: {exc}")
-        coords = None
-    cache[code] = coords
-    return coords
-
-
 def _build_map(
     eetu_coords: tuple[float, float],
     df_arrivals: pd.DataFrame,
     df_departures: pd.DataFrame,
     coord_cache: dict[str, tuple[float, float] | None],
 ) -> str:
-    m = folium.Map(location=eetu_coords, zoom_start=5, tiles="CartoDB positron")
-    folium.CircleMarker(
-        eetu_coords,
-        radius=7,
-        tooltip="Tartu (EETU)",
-        color="#111111",
-        fill=True,
-        fill_color="#111111",
-        fill_opacity=1,
-    ).add_to(m)
+    m = build_map(eetu_coords, "Tartu (EETU)")
 
-    def add_group(df: pd.DataFrame, *, color: str, line_to_eetu: bool, kind: str) -> None:
-        if df.empty:
-            return
-        grouped = defaultdict(list)
-        for _, row in df.iterrows():
-            code = row["other_code"]
-            code = None if pd.isna(code) else code
-            grouped[code or row["other_label"]].append(row)
+    def detail(row: pd.Series) -> str:
+        date_str = _fmt_local(row["actual"] if pd.notna(row["actual"]) else row["scheduled"])[0]
+        return f"{html.escape(row['ident'])} — {date_str}"
 
-        for _, rows in grouped.items():
-            sample = rows[0]
-            coords = _get_coords(sample["other_code"], sample["coords"], coord_cache)
-            if not coords:
-                continue
-            flight_lines = "<br>".join(
-                f"{html.escape(r['ident'])} — {_fmt_local(r['actual'] if pd.notna(r['actual']) else r['scheduled'])[0]}"
-                for r in rows[:10]
-            )
-            popup = folium.Popup(
-                f"<b>{html.escape(sample['other_label'])}</b><br>{kind}: {len(rows)}<br>{flight_lines}",
-                max_width=260,
-            )
-            folium.Marker(
-                coords,
-                tooltip=f"{sample['other_label']} · {len(rows)} {kind}",
-                popup=popup,
-                icon=folium.Icon(color=color),
-            ).add_to(m)
-            if line_to_eetu:
-                folium.PolyLine(
-                    [coords, eetu_coords], color=color, weight=1.5, opacity=0.5
-                ).add_to(m)
-
-    add_group(df_arrivals, color="blue", line_to_eetu=True, kind="arrival(s)")
-    add_group(df_departures, color="green", line_to_eetu=True, kind="departure(s)")
+    add_route_group(
+        m,
+        df_arrivals,
+        code_col="other_code",
+        label_fn=lambda row: row["other_label"],
+        detail_fn=detail,
+        center_coords=eetu_coords,
+        coord_cache=coord_cache,
+        color="blue",
+        kind="arrival(s)",
+    )
+    add_route_group(
+        m,
+        df_departures,
+        code_col="other_code",
+        label_fn=lambda row: row["other_label"],
+        detail_fn=detail,
+        center_coords=eetu_coords,
+        coord_cache=coord_cache,
+        color="green",
+        kind="departure(s)",
+    )
 
     return m.get_root().render()
 
@@ -296,11 +235,15 @@ HTML_TEMPLATE = """<!doctype html>
   .status-neutral {{ background: #eee; color: #555; }}
   .map-wrap {{ margin-top: 1rem; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }}
   iframe.map {{ width: 100%; height: 520px; border: 0; display: block; }}
+  tr.sweden {{ background: #fff3b0; }}
+  tr.sweden:hover {{ background: #ffec8a; }}
+  .legend {{ color: #666; font-size: 0.85rem; margin: 0.4rem 0 0; }}
 </style>
 </head>
 <body>
 <h1>{airport} History Report</h1>
 <p class="meta">Generated {generated_at} &middot; local times shown in Europe/Tallinn</p>
+<p class="legend">🇸🇪 highlighted rows and orange map markers are flights to/from Sweden</p>
 {limit_note}
 
 <div class="summary">
@@ -330,12 +273,8 @@ def build_report(now: dt.datetime) -> str:
     effective_days = min(REQUESTED_HISTORY_DAYS, MAX_HISTORY_DAYS)
     start = now - dt.timedelta(days=effective_days)
 
-    coord_cache = _load_coord_cache()
-    eetu_coords = _get_coords(AIRPORT_ICAO, None, coord_cache)
-    if eetu_coords is None:
-        eetu_info = fetch_airport(AIRPORT_ICAO)
-        eetu_coords = (eetu_info["latitude"], eetu_info["longitude"])
-        coord_cache[AIRPORT_ICAO] = eetu_coords
+    coord_cache = load_coord_cache()
+    eetu_coords = get_center_coords(AIRPORT_ICAO, coord_cache)
 
     raw_arrivals = fetch_arrivals(AIRPORT_ICAO, start=start, end=now)["arrivals"]
     raw_departures = fetch_departures(AIRPORT_ICAO, start=start, end=now)["departures"]
@@ -344,7 +283,7 @@ def build_report(now: dt.datetime) -> str:
     df_departures = _build_dataframe(raw_departures, arrival=False)
 
     map_html = _build_map(eetu_coords, df_arrivals, df_departures, coord_cache)
-    _save_coord_cache(coord_cache)
+    save_coord_cache(coord_cache)
     stats = _summary(df_arrivals, df_departures)
 
     limit_note = ""
