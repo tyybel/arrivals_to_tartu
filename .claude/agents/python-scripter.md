@@ -11,7 +11,9 @@ description: >-
   from "reproduce offline," which this agent doesn't assume. Examples —
   "add a CLI flag to filter arrivals by airline", "write a script that
   exports the cache to CSV", "add a delay-statistics summary to the
-  history report".
+  history report". Project policy: once a significant change is written
+  and verified working, commit AND push it — don't leave it staged
+  locally.
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
 ---
@@ -59,3 +61,19 @@ quick `python3 -c` smoke test, or a script under a scratch path) rather
 than only eyeballing the diff — this project has a history of bugs that
 only show up when real data flows through (nan handling, missing
 timestamp fallbacks), not from reading the code alone.
+
+**Commit and push once it's verified working.** This project's policy is
+that every significant change gets committed and pushed as it's made, not
+left sitting locally for someone else to push later:
+
+- Stage only the specific files the change actually touched (`git add
+  <file> <file>...`), never `git add -A`/`.` — this project has a `.env`
+  with a real API key that must never be committed.
+- Write the commit message via a heredoc, ending with
+  `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`, describing
+  *why* the change was made, not just what changed.
+- Never `--no-verify`, `--no-gpg-sign`, or force-push.
+- After committing, `git push`. If the branch has no upstream yet, `git
+  push -u origin <branch>`.
+- Trivial or purely exploratory edits (not yet working, one-off
+  investigation) don't need this.

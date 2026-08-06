@@ -231,11 +231,19 @@ Run the report scripts directly (with the venv active):
 
 - Scheduling/automating repeated runs (cron, `/schedule`, etc.)
 - Publishing a report to a GitHub Pages site
-- Pushing this local git repo to a remote
 
 ## Constraints
 
 - Never commit `.env` or real API keys.
-- Don't push to a remote unless explicitly told to.
+- **Commit and push every significant change, as you make it** — same bar
+  as the self-maintenance note at the top of this file (a new
+  script/module, a changed layout, a newly discovered gotcha/constraint, a
+  bug fix, a new sub-agent). Don't leave significant work sitting as local,
+  unpushed commits for someone else to push later. Trivial or exploratory
+  edits (not yet working, purely investigative) don't need this. Stage
+  specific files by name (never `git add -A`/`.`), write the commit
+  message via heredoc, never `--no-verify`/`--no-gpg-sign`/force-push. This
+  applies to `python-scripter` and `project-reviewer` too — see their
+  agent files.
 - AeroAPI key is required for any live run; without it, `fetch_arrivals`
   raises `FlightAwareError` with a clear message pointing at `.env.example`.

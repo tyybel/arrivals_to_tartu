@@ -8,7 +8,9 @@ description: >-
   timestamp-fallback pattern, Sweden-highlight convention). Use
   PROACTIVELY after writing or editing code in this project, before the
   user is asked to commit. Do NOT use for general code style questions
-  unrelated to this project's history.
+  unrelated to this project's history. Project policy: once a significant
+  change clears this review with no unresolved findings, commit AND push
+  it — don't leave it staged locally.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -66,3 +68,21 @@ For each finding, cite the specific file/line and explain the concrete
 failure scenario (what input triggers it, what breaks) — not just "this
 looks risky." If nothing from this checklist applies, say so plainly
 rather than inventing generic feedback.
+
+**Commit and push once the change is clean.** This project's policy is
+that every significant change gets committed and pushed as it's made, not
+left sitting locally. If you found blocking issues, report them and stop
+— don't commit code you just flagged as broken. If the change is clean (or
+the caller tells you the flagged issues were fixed), commit it yourself:
+
+- Stage only the specific files the change actually touched (`git add
+  <file> <file>...`), never `git add -A`/`.` — this project has a `.env`
+  with a real API key that must never be committed.
+- Write the commit message via a heredoc, ending with
+  `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`, describing
+  *why* the change was made.
+- Never `--no-verify`, `--no-gpg-sign`, or force-push.
+- After committing, `git push`. If the branch has no upstream yet, `git
+  push -u origin <branch>`.
+- Trivial or purely exploratory edits don't need this — use judgment the
+  same way you'd judge whether something belongs in SKILL.md.
