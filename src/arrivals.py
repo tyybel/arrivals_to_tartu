@@ -10,9 +10,23 @@ import pandas as pd
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
 
-def to_dataframe(raw_response: dict[str, Any]) -> pd.DataFrame:
-    """Convert a raw AeroAPI arrivals response into a flat DataFrame."""
-    flights = raw_response.get("arrivals", [])
+def to_raw_dataframe(raw_response: dict[str, Any], key: str = "arrivals") -> pd.DataFrame:
+    """Flatten every field of a raw AeroAPI arrivals response into a DataFrame,
+    one row per flight, nested objects expanded into dot-notation columns
+    (e.g. origin.code, destination.city). Meant for open-ended exploration
+    (e.g. in Data Wrangler) rather than a curated view.
+    """
+    flights = raw_response.get(key, [])
+    return pd.json_normalize(flights)
+
+
+def to_dataframe(raw_response: dict[str, Any], key: str = "arrivals") -> pd.DataFrame:
+    """Convert a raw AeroAPI arrivals response into a flat DataFrame.
+
+    `key` selects which list in the response to read: "arrivals" for the
+    flights/arrivals endpoint, "scheduled_arrivals" for flights/scheduled_arrivals.
+    """
+    flights = raw_response.get(key, [])
 
     rows = []
     for flight in flights:
@@ -36,11 +50,17 @@ def to_dataframe(raw_response: dict[str, Any]) -> pd.DataFrame:
     return df
 
 
-def save_snapshot(raw_response: dict[str, Any], df: pd.DataFrame, airport_icao: str) -> Path:
-    """Save both the raw API response and the flattened table to output/, timestamped."""
+def save_snapshot(
+    raw_response: dict[str, Any], df: pd.DataFrame, airport_icao: str, label: str = "arrivals"
+) -> Path:
+    """Save both the raw API response and the flattened table to output/, timestamped.
+
+    `label` distinguishes snapshots from different endpoints (e.g. "arrivals" vs
+    "scheduled_arrivals") so they don't overwrite each other.
+    """
     OUTPUT_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    stem = f"{airport_icao}_arrivals_{timestamp}"
+    stem = f"{airport_icao}_{label}_{timestamp}"
 
     raw_path = OUTPUT_DIR / f"{stem}_raw.json"
     raw_path.write_text(json.dumps(raw_response, indent=2))
