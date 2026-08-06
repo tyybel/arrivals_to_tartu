@@ -58,6 +58,7 @@ def fetch_scheduled_arrivals(
 ) -> dict[str, Any]:
     """Fetch schedule-based arrivals (endpoint: flights/scheduled_arrivals) for an
     airport between `start` and `end` (timezone-aware datetimes; either may be in the past).
-    Note: this endpoint is schedule-based and may not return data for past windows —
-    verify against a live call."""
+    Note: confirmed via live testing that AeroAPI rejects `end` values more than
+    2 days from now for this endpoint (400 INVALID_ARGUMENT, "time is too far in
+    the future"). Keep `end` within 2 days of now."""
     return _fetch("scheduled_arrivals", airport_icao, start, end)
