@@ -47,10 +47,17 @@ rather than leaving it to mislead.
   the folium map builder (`build_map`/`add_route_group`). Both scripts must
   keep using this one cache file rather than each maintaining their own —
   see the quota gotcha below.
-- `output/` — generated reports/snapshots (git-ignored: `*.json`, `*.csv`,
-  `*.html`). Report scripts use a **fixed filename, overwritten in place**
-  every run — do not add timestamps to new report filenames, that clutters
-  the directory (a mistake made and corrected earlier in this project).
+- `src/store.py` — local Parquet cache of every flight record either report
+  script has ever fetched (`output/flights.parquet` + covered-interval state
+  in `output/flight_fetch_state.json`). `sync_source(source, fetch_fn,
+  desired_start, desired_end, now)` is the entry point both scripts call
+  instead of hitting `fetch_arrivals`/etc. directly — see the caching gotcha
+  below before changing how either script fetches data.
+- `output/` — generated reports/data (git-ignored: `*.json`, `*.csv`,
+  `*.html`, `*.parquet`). Report scripts use a **fixed filename, overwritten
+  in place** every run — do not add timestamps to new report filenames,
+  that clutters the directory (a mistake made and corrected earlier in this
+  project).
 - `.env` — local secrets, git-ignored. Copy `.env.example` and fill in
   `FLIGHTAWARE_API_KEY`.
 
@@ -80,6 +87,31 @@ Run the report scripts directly (with the venv active):
     never change, so never add a second cache or bypass this one.
     Failed lookups are *not* cached (so a future run retries them), but
     successful ones are permanent.
+  - Flight data itself (arrivals/departures/scheduled_*) is cached in
+    `output/flights.parquet` via `src/store.py`'s `sync_source()` — both
+    report scripts call this instead of `fetch_arrivals` etc. directly, so a
+    rerun only asks AeroAPI for the slice of the window not already covered.
+    State is a **covered interval per source** (`{"start": ..., "end":
+    ...}`), shared across both scripts, and gap-filling is two-sided: if a
+    script's desired window extends earlier *or* later than what's covered,
+    it issues a backward and/or forward fetch to close the gap — this is
+    what lets `generate_report.py` (24h window) and
+    `generate_history_report.py` (10-day window) top up the *same* cache
+    correctly regardless of which one ran first or how large its window is.
+    Don't "simplify" this to a single `last_fetched_at` timestamp — that
+    breaks the moment two scripts with different window sizes share the
+    cache (traced through carefully when building it; a naive
+    forward-only-timestamp version silently skipped backfilling the older
+    9 days when the 24h script had already advanced the timestamp).
+    Known limitation: this still issues one API call per source per run for
+    the "new since last time" sliver even when that sliver is empty — it
+    does not special-case "nothing could possibly be new," so don't expect
+    truly zero calls on a rerun seconds later. Also, `scheduled_*` sources
+    are forward-looking and genuinely mutable (delays, schedule changes) —
+    once a flight's slot has been fetched, this cache does **not** re-poll
+    it for updates, only extends into newly-reachable future territory. If
+    "did this scheduled flight's time change" ever matters, that needs a
+    deliberate re-fetch strategy, not just wider window coverage.
   - Don't add test/debug scripts that call the live API repeatedly. Prefer
     reproducing bugs offline with synthetic data + `unittest.mock.patch` on
     `fetch_airport`/`fetch_arrivals`/`fetch_departures` (this is how the NaN
@@ -139,13 +171,16 @@ Run the report scripts directly (with the venv active):
 - To change the airport, edit `AIRPORT_ICAO` near the top of whichever
   script/notebook cell you're working in (AeroAPI expects ICAO codes, e.g.
   `EETU`).
-- New data transforms belong in `src/arrivals.py`; new map/caching logic
-  belongs in `src/mapping.py`; API-specific logic (auth, endpoint URLs,
-  pagination, error handling) belongs in `src/flightaware_client.py`. Don't
-  inline any of this directly in a report script or the notebook.
+- New data transforms belong in `src/arrivals.py`; new map/coordinate-caching
+  logic belongs in `src/mapping.py`; flight-data caching belongs in
+  `src/store.py`; API-specific logic (auth, endpoint URLs, pagination, error
+  handling) belongs in `src/flightaware_client.py`. Don't inline any of this
+  directly in a report script or the notebook.
 - Both report scripts should keep sharing `src/mapping.py`'s coordinate
-  cache and Sweden-highlight helpers rather than diverging — that's the
-  point of having extracted it.
+  cache, `src/store.py`'s flight-data cache, and the Sweden-highlight
+  helpers rather than diverging — that's the point of having extracted them.
+  A new report script should do the same: call `sync_source()` per endpoint
+  rather than `fetch_arrivals`/etc. directly.
 
 ## Known future directions (not yet implemented — confirm with user before building)
 

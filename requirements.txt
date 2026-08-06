@@ -4,3 +4,4 @@ pandas
 jupyter
 ipykernel
 folium
+pyarrow

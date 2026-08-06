@@ -30,6 +30,7 @@ from src.mapping import (
     parse_position_code,
     save_coord_cache,
 )
+from src.store import sync_source
 
 AIRPORT_ICAO = "EETU"
 REQUESTED_HISTORY_DAYS = 14
@@ -276,8 +277,12 @@ def build_report(now: dt.datetime) -> str:
     coord_cache = load_coord_cache()
     eetu_coords = get_center_coords(AIRPORT_ICAO, coord_cache)
 
-    raw_arrivals = fetch_arrivals(AIRPORT_ICAO, start=start, end=now)["arrivals"]
-    raw_departures = fetch_departures(AIRPORT_ICAO, start=start, end=now)["departures"]
+    raw_arrivals = sync_source(
+        "arrivals", lambda s, e: fetch_arrivals(AIRPORT_ICAO, start=s, end=e), start, now, now
+    )["arrivals"]
+    raw_departures = sync_source(
+        "departures", lambda s, e: fetch_departures(AIRPORT_ICAO, start=s, end=e), start, now, now
+    )["departures"]
 
     df_arrivals = _build_dataframe(raw_arrivals, arrival=True)
     df_departures = _build_dataframe(raw_departures, arrival=False)

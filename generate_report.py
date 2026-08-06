@@ -30,6 +30,7 @@ from src.mapping import (
     load_coord_cache,
     save_coord_cache,
 )
+from src.store import sync_source
 
 AIRPORT_ICAO = "EETU"
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
@@ -138,13 +139,33 @@ def build_report(now: dt.datetime) -> str:
     coord_cache = load_coord_cache()
     eetu_coords = get_center_coords(AIRPORT_ICAO, coord_cache)
 
-    raw_arrivals = fetch_arrivals(AIRPORT_ICAO, start=past_start, end=past_end)
-    raw_departures = fetch_departures(AIRPORT_ICAO, start=past_start, end=past_end)
-    raw_scheduled_arrivals = fetch_scheduled_arrivals(
-        AIRPORT_ICAO, start=future_start, end=future_end
+    raw_arrivals = sync_source(
+        "arrivals",
+        lambda s, e: fetch_arrivals(AIRPORT_ICAO, start=s, end=e),
+        past_start,
+        past_end,
+        now,
     )
-    raw_scheduled_departures = fetch_scheduled_departures(
-        AIRPORT_ICAO, start=future_start, end=future_end
+    raw_departures = sync_source(
+        "departures",
+        lambda s, e: fetch_departures(AIRPORT_ICAO, start=s, end=e),
+        past_start,
+        past_end,
+        now,
+    )
+    raw_scheduled_arrivals = sync_source(
+        "scheduled_arrivals",
+        lambda s, e: fetch_scheduled_arrivals(AIRPORT_ICAO, start=s, end=e),
+        future_start,
+        future_end,
+        now,
+    )
+    raw_scheduled_departures = sync_source(
+        "scheduled_departures",
+        lambda s, e: fetch_scheduled_departures(AIRPORT_ICAO, start=s, end=e),
+        future_start,
+        future_end,
+        now,
     )
 
     df_arrivals = to_dataframe(raw_arrivals, key="arrivals")

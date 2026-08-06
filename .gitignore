@@ -6,4 +6,5 @@ __pycache__/
 output/*.json
 output/*.csv
 output/*.html
+output/*.parquet
 .DS_Store
