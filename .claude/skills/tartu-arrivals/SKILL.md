@@ -63,10 +63,14 @@ rather than leaving it to mislead.
 
 ## Sub-agents
 
-Four project-specific agents live in `.claude/agents/` — prefer them over
-ad hoc work when the task matches, since they already carry this file's
+Project-specific agents live in `.claude/agents/` — prefer them over ad
+hoc work when the task matches, since they already carry this file's
 gotchas without spending main-conversation context re-deriving them:
 
+- `python-scripter` — general-purpose coding: new scripts, new functions
+  in `src/`, non-trivial changes to the report scripts or notebook. The
+  default choice for "write/add/change some Python" that isn't specifically
+  bug root-causing or a read-only cache lookup.
 - `api-debugger` — root-causing a bug in fetching/caching/transform logic.
   Reproduces offline with mocked `fetch_*` calls rather than hitting the
   live API repeatedly.
