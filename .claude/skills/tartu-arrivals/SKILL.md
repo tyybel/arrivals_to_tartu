@@ -6,22 +6,41 @@ description: Use when working on the Tartu Airport (EETU) arrivals project — f
 # Tartu Arrivals Project
 
 Proof-of-concept project that queries FlightAware's AeroAPI for flights
-arriving at Tartu Airport (ICAO `EETU`) within a configurable lookahead
-window (default 24 hours). The primary interface is a Jupyter notebook;
-API and data-transform logic live in importable helper modules.
+at Tartu Airport (ICAO `EETU`). Started as a Jupyter notebook; has since
+grown two standalone HTML report generators. API and data-transform logic
+live in importable helper modules under `src/`.
 
 ## Project layout
 
-- `notebooks/tartu_arrivals.ipynb` — main entry point. Sets parameters
-  (airport code, lookahead hours), calls the helpers, displays the
+- `notebooks/tartu_arrivals.ipynb` — original entry point. Sets parameters
+  (airport code, explicit start/end times), calls the helpers, displays the
   arrivals table, and saves a snapshot.
-- `src/flightaware_client.py` — `fetch_arrivals(airport_icao, hours_ahead)`
-  wraps the AeroAPI `GET /airports/{id}/flights/arrivals` endpoint. Reads
-  `FLIGHTAWARE_API_KEY` from `.env` via `python-dotenv`.
-- `src/arrivals.py` — `to_dataframe(raw_response)` flattens the API
-  response into a pandas DataFrame; `save_snapshot(...)` writes the raw
-  JSON and a CSV into `output/` with a UTC timestamp.
-- `output/` — generated snapshots (git-ignored).
+- `generate_report.py` — standalone script. Writes `output/EETU_report.html`
+  (fixed filename, overwritten every run — not timestamped) with actual
+  arrivals/departures for the past 24h and scheduled arrivals/departures for
+  the next 24h, plus a folium map and Sweden-route highlighting (see Gotchas).
+- `generate_history_report.py` — standalone script. Writes
+  `output/EETU_history_report.html` with actual arrivals/departures over the
+  last `MAX_HISTORY_DAYS` (10, see Gotchas), aircraft type + tail number per
+  flight, a folium map, and Sweden-route highlighting.
+- `src/flightaware_client.py` — thin AeroAPI wrapper: `fetch_arrivals`,
+  `fetch_departures`, `fetch_scheduled_arrivals`, `fetch_scheduled_departures`,
+  `fetch_airport` (lat/lon + country lookup). `_fetch` transparently follows
+  `links.next` pagination — callers always get the full result set for the
+  window, never just one page. Reads `FLIGHTAWARE_API_KEY` from `.env` via
+  `python-dotenv`.
+- `src/arrivals.py` — `to_dataframe`/`to_departures_dataframe` flatten a raw
+  API response into a pandas DataFrame; `save_snapshot(...)` writes the raw
+  JSON and a CSV into `output/` with a UTC timestamp (used by the notebook).
+- `src/mapping.py` — shared by both report scripts: the on-disk airport
+  coordinate cache (`output/airport_coords_cache.json`), `is_sweden()`, and
+  the folium map builder (`build_map`/`add_route_group`). Both scripts must
+  keep using this one cache file rather than each maintaining their own —
+  see the quota gotcha below.
+- `output/` — generated reports/snapshots (git-ignored: `*.json`, `*.csv`,
+  `*.html`). Report scripts use a **fixed filename, overwritten in place**
+  every run — do not add timestamps to new report filenames, that clutters
+  the directory (a mistake made and corrected earlier in this project).
 - `.env` — local secrets, git-ignored. Copy `.env.example` and fill in
   `FLIGHTAWARE_API_KEY`.
 
@@ -38,22 +57,90 @@ cp .env.example .env  # then edit .env with a real AeroAPI key
 Launch with `jupyter notebook notebooks/tartu_arrivals.ipynb` (with the
 venv active) and select the `arrivals_to_tartu` kernel.
 
+Run the report scripts directly (with the venv active):
+`python generate_report.py` / `python generate_history_report.py`.
+
+## Gotchas (hit these live — read before touching this project again)
+
+- **AeroAPI's request quota is small and easy to exhaust.** A single dev
+  session of iterating on the map feature burned through it and started
+  returning `429 RATE_LIMIT_ERROR`. Consequences for how you write code here:
+  - Airport coordinate/country lookups (`fetch_airport`) are cached forever
+    in `output/airport_coords_cache.json` via `src/mapping.py` — coordinates
+    never change, so never add a second cache or bypass this one.
+    Failed lookups are *not* cached (so a future run retries them), but
+    successful ones are permanent.
+  - Don't add test/debug scripts that call the live API repeatedly. Prefer
+    reproducing bugs offline with synthetic data + `unittest.mock.patch` on
+    `fetch_airport`/`fetch_arrivals`/`fetch_departures` (this is how the NaN
+    bug below was actually root-caused, after live repro attempts made the
+    quota problem worse).
+  - If you must call live, do it once, read the result, stop — don't loop
+    "try again" calls hoping quota comes back; report the 429 to the user
+    instead. Quota did visibly reset within the same session at least once.
+- **`flights/arrivals` and `flights/departures` (live-tracked/"actual" data)
+  reject any `start` more than `MAX_HISTORY_DAYS` (10) in the past** —
+  `400 INVALID_ARGUMENT, "time is too far in the past"`. This is a hard
+  server-side cap; there is no pagination trick around it. A "2 weeks of
+  history" request is only satisfiable up to 10 days — say so in the report
+  output, don't silently truncate.
+- **`flights/scheduled_arrivals`/`flights/scheduled_departures` reject any
+  `end` more than ~2 days in the future** — the mirror-image constraint,
+  documented on `fetch_scheduled_arrivals` in `flightaware_client.py`.
+- **`flights/*` endpoints paginate at ~15 records/page.** `_fetch()` in
+  `flightaware_client.py` already follows `links.next` until exhausted, so
+  every `fetch_*` call returns the complete result set for the window — do
+  not re-add manual single-page handling or a `max_pages` param.
+- **pandas silently turns `None` into `float('nan')`.** An object-dtype
+  DataFrame column with a `None` in it renders that cell as `None` when you
+  build the DataFrame, but `.iterrows()` upgrades it to `float('nan')` on
+  read. `nan` is *truthy* in Python, so `code or fallback` does **not** fall
+  back — it returns the float `nan` itself. This actually broke the app: a
+  `nan` leaked into a dict used as a folium marker-grouping key and as a
+  JSON cache key, and `json.dumps(..., sort_keys=True)` crashed with
+  `TypeError: '<' not supported between instances of 'float' and 'str'`
+  once a real (string) key and the stray `nan` key coexisted. Fix pattern:
+  never test a code/ident/label with a bare `if not x` or `x or fallback`
+  once it has passed through a DataFrame — use `isinstance(x, str)` or
+  `pd.isna(x)` explicitly first. `src/mapping.is_sweden()` and
+  `src/mapping.get_coords()` show the guarded pattern.
+- **GA/ad-hoc flights without a matched destination/origin airport** report
+  their last known position as a synthetic code string like
+  `"L 66.12936 12.70054"` (lat, lon) instead of a real ICAO code — handle via
+  `src/mapping.parse_position_code()`, don't try to `fetch_airport()` it.
+- **`registration` (tail number) ≠ `ident` (callsign/flight number).** For
+  GA flights `ident` already *is* the tail number (e.g. `"OY-BKM"`); for
+  airline flights (e.g. `FIN1047`) `registration` is the separate actual
+  aircraft (e.g. `"OH-ATJ"`). Only show `registration` when it differs from
+  `ident`, or every GA row gets a redundant duplicate column.
+- **`aircraft_type` is already in the arrivals/departures payload** — no
+  extra API call needed for equipment info, just read the field (can be
+  `null`).
+- **Sweden-route highlighting convention**: `src/mapping.is_sweden(code)`
+  checks the ICAO prefix `"ES"` (Sweden — distinct from `"EE"` Estonia,
+  `"EF"` Finland, `"EN"` Norway, `"EK"` Denmark). Highlighted rows get CSS
+  class `sweden` + a `🇸🇪` label prefix; map markers/lines render `orange`
+  instead of the usual blue(arrivals)/green(departures). If more countries
+  ever need highlighting, generalize this, don't bolt on a second parallel
+  mechanism.
+
 ## Extending
 
-- To change the airport, edit `AIRPORT_ICAO` in the notebook's parameters
-  cell (AeroAPI expects ICAO codes, e.g. `EETU`).
-- To change the lookahead window (e.g. 24h → 8h), edit `HOURS_AHEAD` in
-  the same cell.
-- New data transforms or output formats belong in `src/arrivals.py`, not
-  inline in the notebook, so they stay reusable (e.g. a future script
-  that publishes a table to GitHub Pages).
-- API-specific logic (auth, endpoint URLs, error handling) belongs in
-  `src/flightaware_client.py`.
+- To change the airport, edit `AIRPORT_ICAO` near the top of whichever
+  script/notebook cell you're working in (AeroAPI expects ICAO codes, e.g.
+  `EETU`).
+- New data transforms belong in `src/arrivals.py`; new map/caching logic
+  belongs in `src/mapping.py`; API-specific logic (auth, endpoint URLs,
+  pagination, error handling) belongs in `src/flightaware_client.py`. Don't
+  inline any of this directly in a report script or the notebook.
+- Both report scripts should keep sharing `src/mapping.py`'s coordinate
+  cache and Sweden-highlight helpers rather than diverging — that's the
+  point of having extracted it.
 
 ## Known future directions (not yet implemented — confirm with user before building)
 
 - Scheduling/automating repeated runs (cron, `/schedule`, etc.)
-- Publishing the arrivals table to a GitHub Pages site
+- Publishing a report to a GitHub Pages site
 - Pushing this local git repo to a remote
 
 ## Constraints
