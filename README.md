@@ -5,6 +5,17 @@ Flight activity at Tartu Airport (ICAO `EETU`), Estonia, pulled from
 Started as a Jupyter notebook proof of concept; now also two standalone
 scripts that generate self-contained HTML reports with an interactive map.
 
+> **Requires a FlightAware AeroAPI account and API key.** This project is
+> a client for FlightAware's commercial AeroAPI — it does not ship any
+> flight data itself. Nothing here will run without:
+> 1. Registering for an account at [flightaware.com/commercial/aeroapi](https://www.flightaware.com/commercial/aeroapi/)
+> 2. Generating an API key from your AeroAPI dashboard
+> 3. Putting that key in a local `.env` file (see [Setup](#setup) below)
+>
+> AeroAPI is a paid, metered API (FlightAware may offer a free/trial quota
+> — check current terms on their site) with a limited request quota; see
+> [How it avoids hammering the API](#how-it-avoids-hammering-the-api).
+
 ## What's here
 
 - **`generate_report.py`** — a 24h-window report: actual arrivals/departures
@@ -67,17 +78,21 @@ scripts below — open them in a browser.
 
 ## Setup
 
+1. Sign up and generate a key at [flightaware.com/commercial/aeroapi](https://www.flightaware.com/commercial/aeroapi/)
+   if you haven't already (see the callout above).
+2. Install and configure:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m ipykernel install --user --name arrivals_to_tartu --display-name "arrivals_to_tartu"
-cp .env.example .env  # then edit .env with a real AeroAPI key
+cp .env.example .env  # then edit .env and paste in your AeroAPI key
 ```
 
-You'll need a [FlightAware AeroAPI](https://www.flightaware.com/commercial/aeroapi/)
-key — put it in `.env` as `FLIGHTAWARE_API_KEY`. `.env` is git-ignored and
-never committed.
+`.env` holds `FLIGHTAWARE_API_KEY=<your key>` and is git-ignored — it is
+never committed, and every script/notebook here reads the key only from
+this local file (via `src/flightaware_client.py`).
 
 ## Usage
 
