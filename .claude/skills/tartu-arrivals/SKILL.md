@@ -61,6 +61,27 @@ rather than leaving it to mislead.
 - `.env` — local secrets, git-ignored. Copy `.env.example` and fill in
   `FLIGHTAWARE_API_KEY`.
 
+## Sub-agents
+
+Four project-specific agents live in `.claude/agents/` — prefer them over
+ad hoc work when the task matches, since they already carry this file's
+gotchas without spending main-conversation context re-deriving them:
+
+- `api-debugger` — root-causing a bug in fetching/caching/transform logic.
+  Reproduces offline with mocked `fetch_*` calls rather than hitting the
+  live API repeatedly.
+- `cache-inspector` — read-only questions about `output/flights.parquet` /
+  `flight_fetch_state.json` / `airport_coords_cache.json`. No network
+  access; never use it for anything needing a live AeroAPI call.
+- `report-runner` — runs `generate_report.py`/`generate_history_report.py`
+  and summarizes the result (counts, window, anomalies) instead of dumping
+  full HTML/console output. Doesn't edit code.
+- `project-reviewer` — checks a diff against this project's specific,
+  previously-shipped bugs (nan-truthy checks, timestamp fallback, cache
+  window invariants, quota discipline, Sweden-highlight convention) before
+  a commit. Not a substitute for general code review, just this project's
+  history.
+
 ## Setup
 
 ```bash
