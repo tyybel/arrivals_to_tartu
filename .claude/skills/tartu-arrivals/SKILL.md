@@ -10,6 +10,16 @@ at Tartu Airport (ICAO `EETU`). Started as a Jupyter notebook; has since
 grown two standalone HTML report generators. API and data-transform logic
 live in importable helper modules under `src/`.
 
+**Keep this file current.** When a change to this project is significant
+enough to matter to a future session — a new script/module, a changed file
+layout, a newly discovered API constraint or library gotcha, a new naming
+or highlighting convention — update this SKILL.md in the same commit (or
+the very next one). This file exists to stop those things from being
+rediscovered live against the API each time; a stale skill file defeats
+that purpose. Prefer editing the relevant section in place over appending;
+if a "Gotcha" or layout entry is no longer true, remove or correct it
+rather than leaving it to mislead.
+
 ## Project layout
 
 - `notebooks/tartu_arrivals.ipynb` — original entry point. Sets parameters
