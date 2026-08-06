@@ -22,6 +22,7 @@ from src.flightaware_client import (
     fetch_scheduled_arrivals,
     fetch_scheduled_departures,
 )
+from src.formatting import fmt_local
 from src.mapping import (
     add_route_group,
     build_map,
@@ -78,7 +79,7 @@ def _table_html(df: pd.DataFrame, time_columns: tuple[str, ...], code_col: str) 
         for col in columns:
             value = row[col]
             if col in time_columns:
-                text = value.strftime("%Y-%m-%d %H:%M UTC") if pd.notna(value) else ""
+                text = fmt_local(value)
             elif col == code_col and is_sweden(value):
                 text = f"🇸🇪 {value}"
             else:
@@ -107,7 +108,7 @@ def _build_map(
     def detail(scheduled_col: str, actual_col: str):
         def fn(row: pd.Series) -> str:
             ts = row[actual_col] if pd.notna(row.get(actual_col)) else row.get(scheduled_col)
-            date_str = ts.strftime("%d %b %H:%M") if pd.notna(ts) else "?"
+            date_str = fmt_local(ts, "%d %b %H:%M") or "?"
             return f"{html.escape(_code_or_unknown(row['ident']))} — {date_str}"
 
         return fn
@@ -193,14 +194,13 @@ def build_report(now: dt.datetime) -> str:
     )
     save_coord_cache(coord_cache)
 
-    generated_at = now.strftime("%Y-%m-%d %H:%M UTC")
     return HTML_TEMPLATE.format(
         airport=AIRPORT_ICAO,
-        generated_at=generated_at,
-        past_start=past_start.strftime("%Y-%m-%d %H:%M UTC"),
-        past_end=past_end.strftime("%Y-%m-%d %H:%M UTC"),
-        future_start=future_start.strftime("%Y-%m-%d %H:%M UTC"),
-        future_end=future_end.strftime("%Y-%m-%d %H:%M UTC"),
+        generated_at=fmt_local(now),
+        past_start=fmt_local(past_start),
+        past_end=fmt_local(past_end),
+        future_start=fmt_local(future_start),
+        future_end=fmt_local(future_end),
         arrivals_count=len(df_arrivals),
         departures_count=len(df_departures),
         scheduled_arrivals_count=len(df_scheduled_arrivals),
@@ -242,7 +242,7 @@ HTML_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <h1>{airport} Flight Report</h1>
-<p class="meta">Generated {generated_at}</p>
+<p class="meta">Generated {generated_at} &middot; local times shown in Europe/Tallinn</p>
 <p class="legend">🇸🇪 highlighted rows and orange map markers are flights to/from Sweden</p>
 
 <h2>Map</h2>

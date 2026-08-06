@@ -16,11 +16,11 @@ import datetime as dt
 import html
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from src.flightaware_client import MAX_HISTORY_DAYS, fetch_arrivals, fetch_departures
+from src.formatting import fmt_local, fmt_local_split
 from src.mapping import (
     add_route_group,
     build_map,
@@ -34,7 +34,6 @@ from src.store import sync_source
 
 AIRPORT_ICAO = "EETU"
 REQUESTED_HISTORY_DAYS = 14
-LOCAL_TZ = ZoneInfo("Europe/Tallinn")
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
 # See generate_report.py's LIVE_DATA_REFETCH_BUFFER / sync_source()'s
@@ -113,13 +112,6 @@ def _build_dataframe(raw_flights: list[dict[str, Any]], *, arrival: bool) -> pd.
     return df.reset_index(drop=True)
 
 
-def _fmt_local(ts: pd.Timestamp) -> tuple[str, str]:
-    if pd.isna(ts):
-        return "—", "—"
-    local = ts.tz_convert(LOCAL_TZ)
-    return local.strftime("%a %d %b"), local.strftime("%H:%M")
-
-
 def _fmt_delay(minutes: Any) -> str:
     if pd.isna(minutes):
         return "—"
@@ -148,7 +140,7 @@ def _rows_to_html(df: pd.DataFrame, other_column_label: str) -> str:
     )
     body_rows = []
     for _, row in df.iterrows():
-        date_str, time_str = _fmt_local(row["actual"] if pd.notna(row["actual"]) else row["scheduled"])
+        date_str, time_str = fmt_local_split(row["actual"] if pd.notna(row["actual"]) else row["scheduled"])
         status_cls = _status_class(row["status"], row["cancelled"], row["diverted"])
         row_cls = ' class="sweden"' if is_sweden(row["other_code"]) else ""
         body_rows.append(
@@ -175,7 +167,7 @@ def _build_map(
     m = build_map(eetu_coords, "Tartu (EETU)")
 
     def detail(row: pd.Series) -> str:
-        date_str = _fmt_local(row["actual"] if pd.notna(row["actual"]) else row["scheduled"])[0]
+        date_str = fmt_local_split(row["actual"] if pd.notna(row["actual"]) else row["scheduled"])[0]
         return f"{html.escape(row['ident'])} — {date_str}"
 
     add_route_group(
@@ -317,15 +309,15 @@ def build_report(now: dt.datetime) -> str:
 
     return HTML_TEMPLATE.format(
         airport=AIRPORT_ICAO,
-        generated_at=now.strftime("%Y-%m-%d %H:%M UTC"),
+        generated_at=fmt_local(now),
         limit_note=limit_note,
         arrivals_count=stats["arrivals"],
         departures_count=stats["departures"],
         origins_count=stats["origins"],
         destinations_count=stats["destinations"],
         map_srcdoc=html.escape(map_html, quote=True),
-        window_start=start.astimezone(LOCAL_TZ).strftime("%d %b %H:%M"),
-        window_end=now.astimezone(LOCAL_TZ).strftime("%d %b %H:%M"),
+        window_start=fmt_local(start, "%d %b %H:%M"),
+        window_end=fmt_local(now, "%d %b %H:%M"),
         arrivals_table=_rows_to_html(df_arrivals, "Origin"),
         departures_table=_rows_to_html(df_departures, "Destination"),
     )
