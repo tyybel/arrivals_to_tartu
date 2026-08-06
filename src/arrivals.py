@@ -50,6 +50,36 @@ def to_dataframe(raw_response: dict[str, Any], key: str = "arrivals") -> pd.Data
     return df
 
 
+def to_departures_dataframe(
+    raw_response: dict[str, Any], key: str = "scheduled_departures"
+) -> pd.DataFrame:
+    """Convert a raw AeroAPI departures response (flights/scheduled_departures or
+    flights/departures) into a flat DataFrame, mirroring to_dataframe but for the
+    departure side (destination airport, *_out timestamps)."""
+    flights = raw_response.get(key, [])
+
+    rows = []
+    for flight in flights:
+        destination = flight.get("destination") or {}
+        rows.append(
+            {
+                "ident": flight.get("ident"),
+                "destination": destination.get("code") or destination.get("code_icao"),
+                "scheduled_out": flight.get("scheduled_out"),
+                "estimated_out": flight.get("estimated_out"),
+                "actual_out": flight.get("actual_out"),
+                "status": flight.get("status"),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        for col in ("scheduled_out", "estimated_out", "actual_out"):
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+        df = df.sort_values("scheduled_out").reset_index(drop=True)
+    return df
+
+
 def save_snapshot(
     raw_response: dict[str, Any], df: pd.DataFrame, airport_icao: str, label: str = "arrivals"
 ) -> Path:
