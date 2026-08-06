@@ -159,6 +159,11 @@ constraints, known gotchas, and conventions used across this project.
   mutable (delays, reschedules); once a slot has been cached, the sync
   logic extends into new future territory but does not re-poll already-seen
   flights for changes.
+- Live-tracked arrivals/departures can be published by AeroAPI a while after
+  the actual event (e.g. GA flights pending an ADS-B match), so both report
+  scripts re-check the last 2 days of already-cached time on every run
+  rather than trusting it's final — see `LIVE_DATA_REFETCH_BUFFER` in
+  either script.
 - This is a personal proof of concept, not a production service — no
   automated scheduling is set up (see "Known future directions" in the
   skill file).

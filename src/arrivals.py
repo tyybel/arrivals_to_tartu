@@ -35,9 +35,14 @@ def to_dataframe(raw_response: dict[str, Any], key: str = "arrivals") -> pd.Data
             {
                 "ident": flight.get("ident"),
                 "origin": origin.get("code") or origin.get("code_icao"),
-                "scheduled_in": flight.get("scheduled_in"),
-                "estimated_in": flight.get("estimated_in"),
-                "actual_in": flight.get("actual_in"),
+                # GA/ad-hoc flights carry only the runway-timestamp fields
+                # (scheduled_on/estimated_on/actual_on), not the gate-timestamp
+                # ones (scheduled_in/etc.) -- fall back so those rows don't
+                # render with blank times. Mirrors the fallback already used
+                # in generate_history_report.py's _extract_row.
+                "scheduled_in": flight.get("scheduled_in") or flight.get("scheduled_on"),
+                "estimated_in": flight.get("estimated_in") or flight.get("estimated_on"),
+                "actual_in": flight.get("actual_in") or flight.get("actual_on"),
                 "status": flight.get("status"),
             }
         )
@@ -65,9 +70,11 @@ def to_departures_dataframe(
             {
                 "ident": flight.get("ident"),
                 "destination": destination.get("code") or destination.get("code_icao"),
-                "scheduled_out": flight.get("scheduled_out"),
-                "estimated_out": flight.get("estimated_out"),
-                "actual_out": flight.get("actual_out"),
+                # See the matching fallback in to_dataframe() above -- GA/ad-hoc
+                # flights only populate the runway-timestamp fields.
+                "scheduled_out": flight.get("scheduled_out") or flight.get("scheduled_off"),
+                "estimated_out": flight.get("estimated_out") or flight.get("estimated_off"),
+                "actual_out": flight.get("actual_out") or flight.get("actual_off"),
                 "status": flight.get("status"),
             }
         )

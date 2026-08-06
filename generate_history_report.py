@@ -37,6 +37,12 @@ REQUESTED_HISTORY_DAYS = 14
 LOCAL_TZ = ZoneInfo("Europe/Tallinn")
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
+# See generate_report.py's LIVE_DATA_REFETCH_BUFFER / sync_source()'s
+# refetch_buffer docstring: re-check this trailing slice of already-"covered"
+# time on every run so late-published arrivals/departures aren't permanently
+# missed.
+LIVE_DATA_REFETCH_BUFFER = dt.timedelta(days=2)
+
 STATUS_CLASSES = {
     "arrived": "status-ok",
     "cancelled": "status-bad",
@@ -278,10 +284,20 @@ def build_report(now: dt.datetime) -> str:
     eetu_coords = get_center_coords(AIRPORT_ICAO, coord_cache)
 
     raw_arrivals = sync_source(
-        "arrivals", lambda s, e: fetch_arrivals(AIRPORT_ICAO, start=s, end=e), start, now, now
+        "arrivals",
+        lambda s, e: fetch_arrivals(AIRPORT_ICAO, start=s, end=e),
+        start,
+        now,
+        now,
+        refetch_buffer=LIVE_DATA_REFETCH_BUFFER,
     )["arrivals"]
     raw_departures = sync_source(
-        "departures", lambda s, e: fetch_departures(AIRPORT_ICAO, start=s, end=e), start, now, now
+        "departures",
+        lambda s, e: fetch_departures(AIRPORT_ICAO, start=s, end=e),
+        start,
+        now,
+        now,
+        refetch_buffer=LIVE_DATA_REFETCH_BUFFER,
     )["departures"]
 
     df_arrivals = _build_dataframe(raw_arrivals, arrival=True)

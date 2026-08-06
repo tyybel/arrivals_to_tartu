@@ -104,6 +104,7 @@ def sync_source(
     desired_start: dt.datetime,
     desired_end: dt.datetime,
     now: dt.datetime,
+    refetch_buffer: dt.timedelta = dt.timedelta(0),
 ) -> dict[str, list[dict[str, Any]]]:
     """Fetch only the parts of [desired_start, desired_end] not already
     covered by a previous sync of `source` (by any caller), merge them into
@@ -114,6 +115,18 @@ def sync_source(
     limits AeroAPI enforces for this endpoint (e.g. MAX_HISTORY_DAYS) --
     this function only knows how to avoid re-fetching what it already has,
     not what the API will accept.
+
+    `refetch_buffer`: also re-query this trailing slice of already-"covered"
+    time on every sync. Needed for live-tracked sources (arrivals/departures):
+    AeroAPI can publish or finalize a flight's record some time after the
+    event itself -- e.g. a GA flight only gets matched to an airport once its
+    ADS-B track resolves -- so a window fetched exactly at the time of the
+    event can miss records that show up moments later, and since `covered`
+    never shrinks, that gap would otherwise never be looked at again. Leave
+    at the default (0) for scheduled_* sources, whose "doesn't re-poll
+    already-seen slots" behavior is a separate, intentional limitation
+    (schedules can change, but re-detecting that isn't what this buffer is
+    for -- see the skill file).
     """
     state = _load_fetch_state()
     covered = state.get(source)
@@ -125,10 +138,11 @@ def sync_source(
     else:
         cov_start = dt.datetime.fromisoformat(covered["start"])
         cov_end = dt.datetime.fromisoformat(covered["end"])
+        refetch_from = max(cov_start, cov_end - refetch_buffer)
         if desired_start < cov_start:
             fetch_ranges.append((desired_start, cov_start))
-        if desired_end > cov_end:
-            fetch_ranges.append((cov_end, desired_end))
+        if desired_end > refetch_from:
+            fetch_ranges.append((refetch_from, desired_end))
         new_start, new_end = min(cov_start, desired_start), max(cov_end, desired_end)
 
     store = load_store()

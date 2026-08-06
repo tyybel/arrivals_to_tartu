@@ -112,6 +112,26 @@ Run the report scripts directly (with the venv active):
     it for updates, only extends into newly-reachable future territory. If
     "did this scheduled flight's time change" ever matters, that needs a
     deliberate re-fetch strategy, not just wider window coverage.
+  - **Live-tracked `arrivals`/`departures` can be published to AeroAPI some
+    time after the actual event** — e.g. a GA flight only gets matched to an
+    airport once its ADS-B track resolves. This bit us for real: a window
+    fetched right when a flight landed could miss it entirely, and because
+    `sync_source`'s covered interval never shrinks, that gap into the past
+    was never looked at again — flights silently vanished from
+    `EETU_report.html`/`EETU_history_report.html` forever, and (since
+    `to_dataframe`/`to_departures_dataframe` in `src/arrivals.py` used to
+    read only `scheduled_in`/`estimated_in`/`actual_in`, never the
+    `_on`/`_off` runway-timestamp fields GA flights actually populate) GA
+    rows that *did* make it through rendered with blank timestamps. Fixed by:
+    (1) `sync_source()` takes a `refetch_buffer: timedelta` that re-queries
+    a trailing slice of already-"covered" time on every call regardless of
+    what's cached — both report scripts pass `LIVE_DATA_REFETCH_BUFFER` (2
+    days) for `arrivals`/`departures` only, not `scheduled_*` (that's the
+    separate, intentional limitation above); (2) `to_dataframe`/
+    `to_departures_dataframe` now fall back to `scheduled_on`/`actual_on`/
+    etc. the same way `generate_history_report.py`'s `_extract_row` already
+    did. If you add a third report script, give it the same buffer and use
+    the same fallback pattern rather than reintroducing either bug.
   - Don't add test/debug scripts that call the live API repeatedly. Prefer
     reproducing bugs offline with synthetic data + `unittest.mock.patch` on
     `fetch_airport`/`fetch_arrivals`/`fetch_departures` (this is how the NaN

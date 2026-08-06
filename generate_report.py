@@ -35,6 +35,12 @@ from src.store import sync_source
 AIRPORT_ICAO = "EETU"
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
+# Live-tracked arrivals/departures records can show up in AeroAPI a while
+# after the actual event (e.g. GA flights pending ADS-B match) -- re-check
+# this trailing slice of already-"covered" time on every run so those don't
+# get permanently missed. See sync_source()'s refetch_buffer docstring.
+LIVE_DATA_REFETCH_BUFFER = dt.timedelta(days=2)
+
 TIME_COLUMNS = {
     "arrivals": ("scheduled_in", "estimated_in", "actual_in"),
     "departures": ("scheduled_out", "estimated_out", "actual_out"),
@@ -145,6 +151,7 @@ def build_report(now: dt.datetime) -> str:
         past_start,
         past_end,
         now,
+        refetch_buffer=LIVE_DATA_REFETCH_BUFFER,
     )
     raw_departures = sync_source(
         "departures",
@@ -152,6 +159,7 @@ def build_report(now: dt.datetime) -> str:
         past_start,
         past_end,
         now,
+        refetch_buffer=LIVE_DATA_REFETCH_BUFFER,
     )
     raw_scheduled_arrivals = sync_source(
         "scheduled_arrivals",
